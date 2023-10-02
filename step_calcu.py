@@ -32,7 +32,7 @@ class Seq2seqTransformer(nn.Module):
             enc_layer,
             dec_layer,
             hidden_size,
-            0,
+            dropout,
             "relu",
             batch_first=True,
         )
@@ -116,7 +116,7 @@ dic = dictionary(pad_id=0, pad_letter="_", dic=word2num)
 
 
 def collate_fn(data):
-    dataset.max_num = random.randint(2, 15)
+    dataset.max_num = random.randint(2, 5)
     x = []
     y = []
     for i in data:
@@ -131,17 +131,17 @@ def collate_fn(data):
     return x, y
 
 
-dataset = myDataset(50000, max_num_len=8)
-dataloader = DataLoader(dataset, batch_size=256, collate_fn=collate_fn)
+dataset = myDataset(50000, max_num_len=2)
+dataloader = DataLoader(dataset, batch_size=128, collate_fn=collate_fn)
 
 model = Seq2seqTransformer(
-    enc_layer=3,
-    dec_layer=3,
-    embedding_dim=128,
-    hidden_size=256,
+    enc_layer=6,
+    dec_layer=6,
+    embedding_dim=256,
+    hidden_size=512,
     dic=dic,
     head=8,
-    dropout=0,
+    dropout=0.1,
 )
 
 
@@ -155,7 +155,7 @@ model.apply(init_weights)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
-optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
 loss_fn = nn.CrossEntropyLoss()
 
 
@@ -186,7 +186,7 @@ def train(epoch, save_model_name):
             pbar.set_description(
                 f"epoch:{epoch}, loss:{total_loss/(i+1):.4f}, acc:{correct/total:.4f}, acc2:{total_correct/sum:.4f}"
             )
-    torch.save(model.state_dict(), save_model_name)
+    # torch.save(model.state_dict(), save_model_name)
     # 输出一个例子便于观察
     model.eval()
     x, y = next(iter(dataloader))
@@ -235,13 +235,13 @@ import datetime
 
 now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 save_model_name = "step_calcu_" + now_time + ".pt"
-model.load_state_dict(torch.load(model_file + "/" + load_model_name))
+# model.load_state_dict(torch.load(model_file + "/" + load_model_name))
 
-for i in range(16, 21):
+for i in range(100):
+    train(i, model_file + "/" + save_model_name)
+
+for i in range(3, 21):
     dataset.max_num = i
     print(i)
     test(100)
 exit()
-
-for i in range(100):
-    train(i, model_file + "/" + save_model_name)
