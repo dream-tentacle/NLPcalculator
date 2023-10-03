@@ -20,27 +20,17 @@ class Seq2seqTransformer(nn.Module):
             embedding_dim=embedding_dim,
             padding_idx=dic.pad_id,
         )
-        self.embed2 = nn.Embedding(
-            num_embeddings=len(dic.dic),
-            embedding_dim=embedding_dim,
-            padding_idx=dic.pad_id,
-        )
         self.position_encoding = PositionalEncoding(embedding_dim, dropout=dropout)
         self.encdec = nn.Transformer(
-            embedding_dim,
-            head,
-            enc_layer,
-            dec_layer,
-            hidden_size,
-            dropout,
-            "relu",
+            d_model=hidden_size,
+            nhead=head,
+            num_encoder_layers=enc_layer,
+            num_decoder_layers=dec_layer,
+            dim_feedforward=1024,
+            dropout=0.1,
             batch_first=True,
         )
         self.fc = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
             nn.Linear(hidden_size, len(dic.dic)),
         )
 
@@ -54,7 +44,7 @@ class Seq2seqTransformer(nn.Module):
         if tgt_mask is None:
             tgt_mask = get_subsequent_mask(tgt).to(tgt.device)
         src = self.position_encoding(self.embed(src))
-        tgt = self.position_encoding(self.embed2(tgt))
+        tgt = self.position_encoding(self.embed(tgt))
         out = self.encdec(
             src,
             tgt,
@@ -79,7 +69,8 @@ class myDataset(Dataset):
         x = []
         for i in range(self.max_num):
             if i != 0:
-                x.append(choose_from("+", "-", "*"))
+                # x.append(choose_from("+", "-", "*"))
+                x.append(choose_from("+", "-"))
             x.append(random.randint(0, 9))
         y = "<"
         x_str = "".join([str(i) for i in x])
@@ -105,6 +96,7 @@ class myDataset(Dataset):
                 x.pop(1)
             y += str("".join([str(k) for k in x]))
         y += ">"
+        # print(x_str, y)
         return x_str, y
 
 
@@ -117,6 +109,7 @@ dic = dictionary(pad_id=0, pad_letter="_", dic=word2num)
 
 def collate_fn(data):
     dataset.max_num = random.randint(2, 5)
+    # dataset.max_num = 10
     x = []
     y = []
     for i in data:
@@ -131,13 +124,13 @@ def collate_fn(data):
     return x, y
 
 
-dataset = myDataset(50000, max_num_len=2)
-dataloader = DataLoader(dataset, batch_size=128, collate_fn=collate_fn)
+dataset = myDataset(100000, max_num_len=5)
+dataloader = DataLoader(dataset, batch_size=32, collate_fn=collate_fn)
 
 model = Seq2seqTransformer(
     enc_layer=6,
     dec_layer=6,
-    embedding_dim=256,
+    embedding_dim=512,
     hidden_size=512,
     dic=dic,
     head=8,
@@ -146,17 +139,18 @@ model = Seq2seqTransformer(
 
 
 # 初始化model
-def init_weights(m):
-    if type(m) == nn.Linear:
-        torch.nn.init.xavier_uniform_(m.weight)
+# def init_weights(m):
+#     if type(m) == nn.Linear:
+#         torch.nn.init.xavier_uniform_(m.weight)
 
 
-model.apply(init_weights)
+# model.apply(init_weights)
+model.train()
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model.to(device)
-optimizer = torch.optim.SGD(model.parameters(), lr=0.1)
-loss_fn = nn.CrossEntropyLoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+loss_fn = nn.CrossEntropyLoss(ignore_index=dic.pad_id)
 
 
 def train(epoch, save_model_name):
@@ -186,7 +180,6 @@ def train(epoch, save_model_name):
             pbar.set_description(
                 f"epoch:{epoch}, loss:{total_loss/(i+1):.4f}, acc:{correct/total:.4f}, acc2:{total_correct/sum:.4f}"
             )
-    # torch.save(model.state_dict(), save_model_name)
     # 输出一个例子便于观察
     model.eval()
     x, y = next(iter(dataloader))
@@ -197,6 +190,8 @@ def train(epoch, save_model_name):
     print("".join([dic.rev_dic[i.item()] for i in x[0]]))
     print("".join([dic.rev_dic[i.item()] for i in y[0, 1:]]))
     print("".join([dic.rev_dic[i.item()] for i in out[0]]))
+    if epoch % 20 == 0:
+        torch.save(model.state_dict(), save_model_name)
 
 
 def test(total=1000, x=None, print_right=False):
@@ -225,23 +220,25 @@ def test(total=1000, x=None, print_right=False):
             x = "".join([dic.rev_dic[i.item()] for i in x])
             wrong.append(f"{x}{out}(true:{y})")
         pbar.set_description(f"acc:{correct/(i+1):.4f}")
-    for i in wrong:
+    for i in wrong[: 10 if len(wrong) > 10 else len(wrong)]:
         print(i)
 
 
 model_file = "model"
-load_model_name = "step_calcu.pt"
+load_model_name = "step_calcu_2023-10-03 06:04:40.pt"
 import datetime
 
 now_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 save_model_name = "step_calcu_" + now_time + ".pt"
 # model.load_state_dict(torch.load(model_file + "/" + load_model_name))
 
-for i in range(100):
+for i in range(200):
     train(i, model_file + "/" + save_model_name)
 
 for i in range(3, 21):
     dataset.max_num = i
     print(i)
     test(100)
+
+torch.save(model.state_dict(), model_file + "/" + save_model_name)
 exit()
