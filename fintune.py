@@ -7,15 +7,16 @@ from transformers import Trainer, TrainingArguments
 import torch
 
 
-def make_datasets(tokenizer, Context_length=128, size=1000000):
+def make_datasets(tokenizer, Context_length=128, size=10):
     def tokenize(element):
-        outputs = tokenizer(
+        tokenized = tokenizer(
             element["full"],
             return_length=True,
             truncation=True,
             max_length=Context_length,
+            padding="max_length",
         )
-        return {"input_ids": outputs["input_ids"]}
+        return {"input_ids": tokenized["input_ids"]}
 
     print("Creating datasets... ")
     # 创建数据集字典
@@ -27,12 +28,30 @@ def make_datasets(tokenizer, Context_length=128, size=1000000):
         b = random.randint(int(10 ** (num_len - 1)), int(10**num_len))
         x = str(a) + "+" + str(b) + "="
         y = str(a + b)
-        raw_datasets.append({"question": x, "answer": y, "full": x + y})
+        raw_datasets.append(
+            {"question": x, "answer": y, "full": x + y, "question_len": len(x)}
+        )
     raw_datasets = Dataset.from_list(raw_datasets)
-    print("Done")
     tokenized_datasets = raw_datasets.map(
         tokenize, batched=True, remove_columns=raw_datasets.column_names
     )
+    labels_column = []
+    for i in range(0, len(tokenized_datasets)):
+        tokenized_datasets[i]["input_ids"] = [
+            tokenizer.eos_token_id
+        ] + tokenized_datasets[i]["input_ids"]
+        # 生成labels
+        outputs = (
+            ([-100] * len(raw_datasets[i]["question"]))
+            + tokenized_datasets[i]["input_ids"][len(raw_datasets[i]["question"]) + 1 :]
+            + [tokenizer.eos_token_id]
+        )
+        labels_column.append(outputs)
+    tokenized_datasets = tokenized_datasets.add_column(
+        "labels",
+        labels_column,
+    )
+    print("Done")
     return tokenized_datasets
 
 
@@ -62,36 +81,12 @@ args = TrainingArguments(
     use_cpu=True,
 )
 
-# 加载tokenizer
-tokenizer = CharTokenizer()
-tokenizer.pad_token = tokenizer.eos_token
-Context_length = 128
-data_collator = DataCollatorForLanguageModeling(
-    tokenizer, mlm=False
-)  # 它默认是进行mlm，设为False则进行clm
-
-
-class CustomTrainer(Trainer):
-    def compute_loss(self, model, inputs, return_outputs=False):
-        labels = inputs.pop("labels")
-        outputs = model(**inputs)
-        logits = outputs.get("logits")
-        # 找到每一行label的等号位置，前面的是问题，因此要去掉
-        # label的等号位置
-        for i in range(0, len(labels)):
-            equal_pos = torch.where(labels[i] == tokenizer.encode("=")[0])[0][0]
-            labels[i][:equal_pos] = -100
-        loss_fct = torch.nn.CrossEntropyLoss()
-        loss = loss_fct(logits.view(-1, logits.size(-1)), labels.view(-1))
-        return (loss, outputs) if return_outputs else loss
-
 
 def train(model, tokenizer, args, data_collator, tokenized_datasets):
-    trainer = CustomTrainer(
+    trainer = Trainer(
         model=model,
         tokenizer=tokenizer,
         args=args,
-        data_collator=data_collator,
         train_dataset=tokenized_datasets,
     )
     trainer.train()
@@ -99,7 +94,7 @@ def train(model, tokenizer, args, data_collator, tokenized_datasets):
     return trainer
 
 
-def evaluate(model, tokenized_datasets):
+def evaluate(model, tokenized_datasets, tokenizer, Context_length):
     right = 0
     wrong = []
     for i in range(0, len(tokenized_datasets)):
@@ -126,10 +121,19 @@ def evaluate(model, tokenized_datasets):
         print(wrong)
 
 
+# 加载tokenizer
+tokenizer = CharTokenizer()
+tokenizer.pad_token = tokenizer.eos_token
+Context_length = 128
+data_collator = DataCollatorForLanguageModeling(
+    tokenizer,
+    mlm=False,
+)  # 它默认是进行mlm，设为False则进行clm
+
 model = pretrain_model()
 for i in range(0, 10):
     print("Round: ", i)
-    tokenized_datasets = make_datasets(tokenizer, Context_length)
+    tokenized_datasets = make_datasets(tokenizer, Context_length, size=10000)
     trainer = train(model, tokenizer, args, data_collator, tokenized_datasets)
     if i == 9:
         trainer.evaluate()
@@ -138,3 +142,6 @@ for i in range(0, 10):
 
 # model = GPT2LMHeadModel.from_pretrained("model/test")
 # tokenized_datasets = make_datasets(tokenizer, Context_length, size=10)
+
+
+# CUDA_VISIBLE_DEVICES=7 python fintune.py
