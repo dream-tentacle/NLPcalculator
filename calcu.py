@@ -27,21 +27,16 @@ class Seq2seqTransformer(nn.Module):
         )
         self.position_encoding = PositionalEncoding(embedding_dim, dropout=dropout)
         self.encdec = nn.Transformer(
-            embedding_dim,
-            head,
-            enc_layer,
-            dec_layer,
-            hidden_size,
-            0,
-            "relu",
+            d_model=embedding_dim,
+            nhead=head,
+            num_encoder_layers=enc_layer,
+            num_decoder_layers=dec_layer,
+            dim_feedforward=hidden_size,
+            dropout=dropout,
             batch_first=True,
         )
         self.fc = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, len(dic.dic)),
+            nn.Linear(embedding_dim, len(dic.dic)),
         )
 
     def forward(
@@ -93,7 +88,7 @@ dic = dictionary(pad_id=0, pad_letter="-", dic=word2num)
 
 
 def collate_fn(data):
-    dataset.max_num = random.randint(1, 20)
+    dataset.max_num = random.randint(1, 10)
     x = []
     y = []
     for i in data:
@@ -210,7 +205,7 @@ def test(total=1000, x=None, print_right=False):
 model_file = "model"
 load_model_name = "calcu_slob.pt"
 save_model_name = "calcu_slob.pt"  # same len on batch
-model.load_state_dict(torch.load(model_file + "\\" + load_model_name))
+# model.load_state_dict(torch.load(model_file + "\\" + load_model_name))
 
 
 for i in range(100):
