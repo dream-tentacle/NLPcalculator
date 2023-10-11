@@ -5,9 +5,12 @@ from transformers import AutoTokenizer, GPT2LMHeadModel, AutoConfig, GPT2Tokeniz
 from transformers import DataCollatorForLanguageModeling
 from transformers import Trainer, TrainingArguments
 import torch
+from tqdm import tqdm
 
 
-def make_datasets(tokenizer, Context_length=128, size=10):
+def make_datasets(
+    tokenizer, Context_length=128, size=10, max_max_num=15, set_num=None, to_print=False
+):
     def create_one(max_num):
         x = []
         for i in range(max_num):
@@ -53,11 +56,16 @@ def make_datasets(tokenizer, Context_length=128, size=10):
         )
         return tokenized
 
-    print("Creating datasets... ")
+    if to_print:
+        print("Creating datasets... ")
     # 创建数据集字典
     raw_datasets = []
-    for i in range(size):
-        raw_datasets.append(create_one(random.randint(2, 15)))
+    if set_num is not None:
+        for i in range(size):
+            raw_datasets.append(create_one(set_num))
+    else:
+        for i in range(size):
+            raw_datasets.append(create_one(random.randint(2, max_max_num)))
     raw_datasets = Dataset.from_list(raw_datasets)
     tokenized_datasets = raw_datasets.map(
         tokenize, batched=True, remove_columns=raw_datasets.column_names
@@ -78,11 +86,15 @@ def make_datasets(tokenizer, Context_length=128, size=10):
         raw_datasets["question"],
     )
     tokenized_datasets = tokenized_datasets.add_column(
+        "answer",
+        raw_datasets["answer"],
+    )
+    tokenized_datasets = tokenized_datasets.add_column(
         "full",
         raw_datasets["full"],
     )
-    print(tokenized_datasets[0])
-    print("Done")
+    if to_print:
+        print("Done")
     return tokenized_datasets
 
 
@@ -125,21 +137,31 @@ def evaluate(model, tokenized_datasets, tokenizer, Context_length):
     right = 0
     wrong = []
 
-    for i in range(0, len(tokenized_datasets)):
-        input_ids = tokenized_datasets[i]["question"]
-        input_ids = tokenizer.encode(input_ids, return_tensors="pt")
-        outputs = model.generate(
-            input_ids=input_ids,
-            max_length=Context_length,
-            num_beams=1,
+    pbar = tqdm(range(len(tokenized_datasets)))
+    model.eval()
+    model.to("cuda")
+    for i in pbar:
+        outputs = model(
+            input_ids=torch.tensor(tokenized_datasets[i]["input_ids"])
+            .unsqueeze(0)
+            .to("cuda"),
         )
-        print(input_ids)
-        outputs = outputs[0].cpu().numpy().tolist()
-        if tokenizer.decode(outputs[:-1]) == tokenized_datasets[i]["full"]:
+        outputs = outputs.logits
+        outputs = torch.argmax(outputs, dim=-1)
+        outputs = outputs[0].cpu().detach().numpy().tolist()
+        outputs = outputs[
+            len(tokenized_datasets[i]["question"])
+            - 1 : len(tokenized_datasets[i]["full"])
+            - 1
+        ]
+        if tokenizer.decode(outputs) == tokenized_datasets[i]["answer"]:
             right += 1
         else:
             wrong.append(
-                [tokenized_datasets[i]["full"], tokenizer.decode(outputs[:-1])]
+                [
+                    tokenizer.decode(outputs),
+                    tokenized_datasets[i]["answer"],
+                ]
             )
 
     for i in range(min(10, len(wrong))):
@@ -165,16 +187,20 @@ data_collator = DataCollatorForLanguageModeling(
 
 
 # model = pretrain_model()
-# tokenized_datasets = make_datasets(tokenizer, Context_length, size=100000)
+# tokenized_datasets = make_datasets(tokenizer, Context_length, size=1000000)
 # train(model, tokenizer, args, data_collator, tokenized_datasets)
 # model.save_pretrained("model/1")
 # print("Done\n")
 
 
-tokenized_datasets = make_datasets(tokenizer, Context_length, size=10000)
 model = GPT2LMHeadModel.from_pretrained("model/1")
+for i in range(3, 17):
+    print(f"set_num: {i}")
+    tokenized_datasets = make_datasets(tokenizer, Context_length, size=1000, set_num=i)
+    evaluate(model, tokenized_datasets, tokenizer, Context_length)
+# tokenized_datasets = make_datasets(tokenizer, Context_length, size=10000)
 
-evaluate(model, tokenized_datasets, tokenizer, Context_length)
+# evaluate(model, tokenized_datasets, tokenizer, Context_length)
 
 
 # CUDA_VISIBLE_DEVICES=7 python fintune.py

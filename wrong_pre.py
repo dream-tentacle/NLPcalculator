@@ -138,6 +138,14 @@ def pretrain_model():
     return model
 
 
+def no_pretrain_model():
+    config = AutoConfig.from_pretrained("./download")
+    model = GPT2LMHeadModel(config=config)
+    model_size = sum(t.numel() for t in model.parameters())
+    print(f"GPT-2 size: {model_size/1000**2:.1f}M parameters")
+    return model
+
+
 args = TrainingArguments(
     report_to="none",
     output_dir="calculator",
@@ -169,7 +177,7 @@ def evaluate(model, tokenized_datasets, tokenizer, Context_length):
     right = 0
     wrong = []
 
-    pbar = tqdm(range(len(tokenized_datasets)))
+    pbar = tqdm(range(len(tokenized_datasets)), leave=False)
     model.eval()
     model.to("cuda")
     for i in pbar:
@@ -196,6 +204,37 @@ def evaluate(model, tokenized_datasets, tokenizer, Context_length):
                 ]
             )
 
+    for i in range(min(0, len(wrong))):
+        print(f"{wrong[i][0]}, len: {len(wrong[i][0])}")
+        print(f"{wrong[i][1]}, len: {len(wrong[i][1])}")
+    print(right / len(tokenized_datasets))
+
+
+def evaluate_ge(model, tokenized_datasets, tokenizer, Context_length):
+    right = 0
+    wrong = []
+
+    pbar = tqdm(range(len(tokenized_datasets)))
+    model.eval()
+    model.to("cuda")
+    for i in pbar:
+        inputs = tokenizer.encode(tokenized_datasets[i]["question"])
+        inputs = torch.tensor(inputs).unsqueeze(0).to("cuda")
+        outputs = model.generate(
+            inputs,
+            attention_mask=torch.ones_like(inputs),
+            max_length=Context_length,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+        if (
+            tokenizer.decode(outputs[0]) == tokenized_datasets[i]["full"]
+            or tokenizer.decode(outputs[0][:-1]) == tokenized_datasets[i]["full"]
+        ):
+            right += 1
+        else:
+            wrong.append([tokenized_datasets[i]["full"], tokenizer.decode(outputs[0])])
+
     for i in range(min(2, len(wrong))):
         print(f"{wrong[i][0]}, len: {len(wrong[i][0])}")
         print(f"{wrong[i][1]}, len: {len(wrong[i][1])}")
@@ -218,21 +257,20 @@ data_collator = DataCollatorForLanguageModeling(
 )  # 它默认是进行mlm，设为False则进行clm
 
 
-# model = pretrain_model()
+model = no_pretrain_model()
+tokenized_datasets = make_datasets(
+    tokenizer, Context_length, size=200000, to_print=True, shuffle=True
+)
+train(model, tokenizer, args, data_collator, tokenized_datasets)
+model.save_pretrained("model/wrong_pre_no_pretrain_1")
+print("Done\n")
+
+
 # model = GPT2LMHeadModel.from_pretrained("model/1")
-# tokenized_datasets = make_datasets(
-#     tokenizer, Context_length, size=200000, to_print=True, shuffle=True
-# )
-# train(model, tokenizer, args, data_collator, tokenized_datasets)
-# model.save_pretrained("model/1")
-# print("Done\n")
-
-
-model = GPT2LMHeadModel.from_pretrained("model/1")
-for i in range(3, 20):
-    print(f"set_num: {i}")
-    tokenized_datasets = make_datasets(tokenizer, Context_length, size=1000, set_num=i)
-    evaluate(model, tokenized_datasets, tokenizer, Context_length)
+# for i in range(3, 20):
+#     print(i)
+#     tokenized_datasets = make_datasets(tokenizer, Context_length, size=10000, set_num=i)
+#     evaluate(model, tokenized_datasets, tokenizer, Context_length)
 
 
 # CUDA_VISIBLE_DEVICES=7 python fintune.py
